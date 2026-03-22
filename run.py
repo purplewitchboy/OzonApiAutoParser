@@ -65,11 +65,12 @@ def main():
         import scripts.run_prices_report as prices_script
         
         # Парсим дополнительные аргументы
-        script_args = ['run_prices_report.py', '--spreadsheet-id', sys.argv[2]]
-        
+        script_args = ['run_prices_report.py', '--spreadsheet-id', sys.argv[2], '--overwrite']
+
         # Добавляем дополнительные аргументы если есть
         for i in range(3, len(sys.argv)):
-            script_args.append(sys.argv[i])
+            if sys.argv[i] != '--overwrite':  # не дублируем флаг
+                script_args.append(sys.argv[i])
         
         # Сохраняем оригинальные аргументы
         original_argv = sys.argv
