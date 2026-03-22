@@ -1,0 +1,162 @@
+function loadSalesFBO() {
+  Logger.log('=== loadSalesFBO v2 start (optimized) ===');
+
+  const settings = getSettings();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Продажи FBO') || ss.insertSheet('Продажи FBO');
+
+  sheet.clear();
+  sheet.getRange(1, 1, 1, 11).setValues([[
+    'Кабинет', 'Идентификатор заказа', 'Номер заказа', 'Статус отправления',
+    'Дата и время создания отправления', 'SKU', 'Количество', 'Цена',
+    'Кластер отправления', 'Кластер доставки', 'Название склада'
+  ]]);
+
+  // Функция для преобразования даты из формата ISO в нужный формат
+  function formatDate(isoDateString) {
+    if (!isoDateString) return '';
+    
+    try {
+      // Создаем объект Date из строки ISO
+      const date = new Date(isoDateString);
+      
+      // Проверяем, что дата валидна
+      if (isNaN(date.getTime())) {
+        Logger.log('Некорректная дата: ' + isoDateString);
+        return isoDateString;
+      }
+      
+      // Форматируем дату в нужный формат: день.месяц.год часы:минуты:секунды
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0'); // Месяцы от 0 до 11
+      const year = date.getFullYear();
+      
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const seconds = String(date.getSeconds()).padStart(2, '0');
+      
+      return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
+    } catch (e) {
+      Logger.log('Ошибка при форматировании даты: ' + isoDateString + ' - ' + e.message);
+      return isoDateString;
+    }
+  }
+
+  // Основной запрос списка отправлений
+  const listUrl = 'https://api-seller.ozon.ru/v2/posting/fbo/list';
+  const listPayload = {
+    filter: { since: toIso(settings.dateFrom), to: toIso(settings.dateTo) },
+    with: {
+      analytics_data: true,
+      financial_data: true
+    },
+    limit: 1000,
+    offset: 0
+  };
+
+  const options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'Client-Id': String(settings.sellerClientId),
+      'Api-Key': settings.sellerApiKey
+    },
+    payload: JSON.stringify(listPayload),
+    muteHttpExceptions: true
+  };
+
+  // Функция для выполнения запроса с повторными попытками
+  const fetchWithRetry = (url, opts, maxRetries = 3) => {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = UrlFetchApp.fetch(url, opts);
+        const code = response.getResponseCode();
+        const text = response.getContentText();
+
+        if (code === 200) {
+          return JSON.parse(text);
+        } else if (code === 429) {
+          Logger.log(`Attempt ${attempt}: Rate limit (429) hit.`);
+          if (attempt === maxRetries) throw new Error(`HTTP ${code}: ${text.substring(0, 200)}`);
+          Utilities.sleep(Math.pow(2, attempt) * 1000 + Math.random() * 1000);
+        } else {
+          throw new Error(`HTTP ${code}: ${text.substring(0, 200)}`);
+        }
+      } catch (e) {
+        Logger.log(`Attempt ${attempt} failed: ${e.message}`);
+        if (attempt === maxRetries) throw e;
+        Utilities.sleep(2000);
+      }
+    }
+  };
+
+  let allRows = [];
+  let offset = 0;
+  const limit = 1000;
+
+  // Постраничная загрузка всех данных
+  do {
+    listPayload.offset = offset;
+    options.payload = JSON.stringify(listPayload);
+    
+    Logger.log(`Fetching page with offset ${offset}...`);
+    const jsonData = fetchWithRetry(listUrl, options);
+    const postings = jsonData.result || [];
+
+    if (postings.length === 0) break;
+
+    // Обработка полученных отправлений
+    for (const posting of postings) {
+      // Извлекаем данные из разных возможных мест в ответе API
+      const clusterFrom = posting.financial_data?.cluster_from || '';
+      const clusterTo = posting.financial_data?.cluster_to || '';
+      const warehouseName = posting.analytics_data?.warehouse_name || 
+                            posting.analytics_data?.warehouse || 
+                            posting.delivery_method?.warehouse_name || 
+                            posting.delivery_method?.warehouse || 
+                            '';
+      
+      // Форматируем дату
+      const formattedDate = formatDate(posting.created_at || '');
+
+      // Формируем строки для каждого товара в отправлении
+      for (const product of (posting.products || [])) {
+        allRows.push([
+          settings.cabinetName,
+          posting.posting_number || '',
+          posting.order_number || '',
+          posting.status || '',
+          formattedDate,  // Используем отформатированную дату
+          product.sku || '',
+          product.quantity || 0,
+          product.price || '',
+          clusterFrom,
+          clusterTo,
+          warehouseName
+        ]);
+      }
+    }
+
+    offset += postings.length;
+    Logger.log(`Processed ${postings.length} postings. Total rows in memory: ${allRows.length}`);
+
+    // Если получено меньше лимита, значит это последняя страница
+    if (postings.length < limit) break;
+
+    Utilities.sleep(300);
+  } while (true);
+
+  // Запись всех данных в таблицу одной операцией
+  if (allRows.length > 0) {
+    sheet.getRange(2, 1, allRows.length, 11).setValues(allRows);
+    
+    // Автоматическое форматирование ширины столбцов
+    sheet.autoResizeColumns(1, 11);
+    
+    Logger.log(`Successfully wrote ${allRows.length} rows to sheet.`);
+  } else {
+    Logger.log('No data to write.');
+  }
+
+  Logger.log('=== loadSalesFBO v2 finished ===');
+}

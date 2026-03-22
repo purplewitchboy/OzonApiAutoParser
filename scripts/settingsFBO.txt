@@ -1,0 +1,36 @@
+const DAYS_BACK = 30;
+
+function getSettings() {
+  const sheet = SpreadsheetApp.getActive()
+    .getSheetByName('Настройки');
+
+  if (!sheet) {
+    throw new Error('Лист "Настройки" не найден');
+  }
+
+  const data = sheet.getRange(1, 1, sheet.getLastRow(), 2).getValues();
+  const settings = {};
+
+  data.forEach(([key, value]) => {
+    if (key) {
+      settings[key] = value;
+    }
+  });
+
+  const dateTo = new Date();
+  const dateFrom = new Date();
+  dateFrom.setDate(dateTo.getDate() - DAYS_BACK);
+  const formattedFrom = Utilities.formatDate(dateFrom, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  const formattedTo = Utilities.formatDate(dateTo, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  Logger.log(`Период отчета: ${formattedFrom} — ${formattedTo}`);
+  
+  return {
+    sellerClientId: settings['Client ID'],
+    sellerApiKey: settings['Seller API Key'],
+    performanceClientId: settings['Performance Client ID'],
+    performanceClientSecret: settings['Performance Client Secret'],
+    cabinetName: settings['Название кабинета'],
+    dateFrom: formattedFrom,
+    dateTo: formattedTo
+  };
+}
