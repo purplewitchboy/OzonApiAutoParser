@@ -102,24 +102,34 @@ class DetailsSheet:
             logger.warning(f"Не удалось применить форматирование: {e}")
     
     def get_period(self):
-        """Возвращает период в московском времени (UTC+3), 29 дней назад по МСК — вчера МСК.
+        """Возвращает период в московском времени (UTC+3): вчера МСК 23:59:59 — N дней назад 00:00:00.
 
-        Ozon ожидает даты в московском времени с суффиксом Z, как в официальном примере:
-          "from": "2021-11-01T00:00:00.000Z", "to": "2021-11-02T00:00:00.000Z"
-        GAS-скрипт работал аналогично: брал московские даты и добавлял T00:00:00Z.
+        Ozon ожидает даты в московском времени с суффиксом Z (как в официальном примере API).
+        GAS-скрипт работал так же: брал московские даты и добавлял T00:00:00Z.
+
+        Особенность Ozon: при диапазоне 30 дней, начинающемся в феврале, API возвращает ошибку
+        «too long period» из-за бага на стороне Ozon (февраль считается длиннее 28 дней).
+        Для таких диапазонов используется 27 дней. Во всех остальных месяцах — 29 дней (≈30 дней).
         """
         MSK = timedelta(hours=3)
         now_msk = datetime.utcnow() + MSK
-
-        # Вчера по Москве
         yesterday_msk = datetime(now_msk.year, now_msk.month, now_msk.day, 0, 0, 0) - timedelta(days=1)
 
         date_to_msk = datetime(yesterday_msk.year, yesterday_msk.month, yesterday_msk.day, 23, 59, 59)
-        date_from_msk = yesterday_msk - timedelta(days=29)  # 29 дней назад, 00:00:00 МСК
+
+        # Проверяем: попадает ли начало 30-дневного диапазона в февраль?
+        candidate_from = yesterday_msk - timedelta(days=29)
+        if candidate_from.month == 2:
+            # Баг Ozon: февраль + 30 дней → "too long period". Берём 27 дней.
+            days_back = 27
+        else:
+            days_back = 29
+
+        date_from_msk = yesterday_msk - timedelta(days=days_back)
 
         logger.info(
             f"Период отчета (МСК): {date_from_msk.strftime('%Y-%m-%d %H:%M:%S')} — "
-            f"{date_to_msk.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"{date_to_msk.strftime('%Y-%m-%d %H:%M:%S')} ({days_back + 1} дней)"
         )
 
         return (
