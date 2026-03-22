@@ -102,29 +102,35 @@ class DetailsSheet:
             logger.warning(f"Не удалось применить форматирование: {e}")
     
     def get_period(self):
-        """Получение периода: день ПО - вчера 23:59:59, день С - 30 дней назад от вчера 00:00:00"""
+        """Получение периода: день ПО - вчера 23:59:59, день С - ровно 1 месяц назад 00:00:00.
+
+        Ozon считает лимит календарным месяцем (date_from + 1 месяц >= date_to),
+        поэтому используем тот же день предыдущего месяца, а не фиксированное число дней.
+        """
+        import calendar
+
         now = datetime.utcnow()
-        
+
         # Вчера 23:59:59 UTC
         yesterday = now - timedelta(days=1)
-        date_to = datetime(
-            yesterday.year, yesterday.month, yesterday.day,
-            23, 59, 59
-        )
-        
-        # 29 дней назад от вчера 00:00:00 UTC (итого 30 дней включительно — лимит Ozon)
-        date_from = date_to - timedelta(days=29)
-        date_from = datetime(
-            date_from.year, date_from.month, date_from.day,
-            0, 0, 0
-        )
-        
-        # Форматируем в RFC3339
+        date_to = datetime(yesterday.year, yesterday.month, yesterday.day, 23, 59, 59)
+
+        # Тот же день месяц назад, 00:00:00 UTC
+        month = date_to.month - 1
+        year = date_to.year
+        if month == 0:
+            month = 12
+            year -= 1
+        # Если дня не существует в предыдущем месяце (напр. 31 марта → 28/29 февраля) — берём последний день
+        last_day = calendar.monthrange(year, month)[1]
+        day = min(date_to.day, last_day)
+        date_from = datetime(year, month, day, 0, 0, 0)
+
         formatted_from = date_from.isoformat() + 'Z'
         formatted_to = date_to.isoformat() + 'Z'
-        
+
         logger.info(f"Период отчета: {date_from.strftime('%Y-%m-%d %H:%M:%S')} — {date_to.strftime('%Y-%m-%d %H:%M:%S')}")
-        
+
         return formatted_from, formatted_to
     
     def get_all_transactions(self, date_from: str, date_to: str):
