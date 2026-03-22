@@ -31,7 +31,7 @@ jobs:
 
           commands = [
               "products", "prices", "ads", "stock-fbo",
-              "details"
+              "details", "sales-fbo", "orders-fbo"
           ]
 
           errors = []
