@@ -18,19 +18,21 @@ import requests
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.settings import (
+from scripts.settings_fbo import (
     load_credentials,
     open_spreadsheet,
     get_settings,
     get_or_create_sheet,
     ozon_headers,
     to_iso,
+    format_date,
 )
 from src.utils.logger import setup_logger
 
 logger = logging.getLogger(__name__)
 
 LIST_URL = "https://api-seller.ozon.ru/v3/posting/fbs/list"
+LIMIT = 1000
 
 HEADERS = [
     "Кабинет",
@@ -59,55 +61,64 @@ def load_orders_fbs(spreadsheet_id: str, credentials: dict) -> bool:
     sheet.clear()
 
     hdrs = ozon_headers(settings)
-
-    payload = {
-        "filter": {
-            "since": to_iso(settings["date_from"]),
-            "to": to_iso(settings["date_to"]),
-        },
-        "limit": 1000,
-        "offset": 0,
-    }
+    all_rows = [HEADERS]
+    offset = 0
 
     with requests.Session() as session:
-        resp = session.post(LIST_URL, json=payload, headers=hdrs, timeout=30)
+        while True:
+            payload = {
+                "filter": {
+                    "since": to_iso(settings["date_from"]),
+                    "to": to_iso(settings["date_to"]),
+                },
+                "with": {"financial_data": True},
+                "limit": LIMIT,
+                "offset": offset,
+            }
 
-    logger.info(f"Orders FBS HTTP CODE: {resp.status_code}")
+            logger.info(f"Orders FBS: запрос с offset={offset}...")
+            resp = session.post(LIST_URL, json=payload, headers=hdrs, timeout=30)
 
-    if resp.status_code != 200:
-        raise RuntimeError(f"Orders FBS error {resp.status_code}: {resp.text[:200]}")
+            logger.info(f"Orders FBS HTTP CODE: {resp.status_code}")
 
-    data = resp.json()
-    postings = (data.get("result") or {}).get("postings", [])
-    logger.info(f"FBS postings count: {len(postings)}")
+            if resp.status_code != 200:
+                raise RuntimeError(f"Orders FBS error {resp.status_code}: {resp.text[:200]}")
 
-    all_rows = [HEADERS]
+            data = resp.json()
+            postings = (data.get("result") or {}).get("postings", [])
+            logger.info(f"FBS postings count: {len(postings)}")
 
-    for posting in postings:
-        financial = posting.get("financial_data") or {}
-        posting_services = financial.get("posting_services") or {}
+            for posting in postings:
+                financial = posting.get("financial_data") or {}
+                posting_services = financial.get("posting_services") or {}
+                formatted_date = format_date(posting.get("in_process_at", ""))
 
-        for product in posting.get("products", []):
-            price = float(product.get("price") or 0)
-            quantity = int(product.get("quantity") or 0)
-            currency = product.get("currency_code", "")
+                for product in posting.get("products", []):
+                    price = float(product.get("price") or 0)
+                    quantity = int(product.get("quantity") or 0)
+                    currency = product.get("currency_code", "")
 
-            all_rows.append([
-                settings["cabinet_name"],
-                posting.get("order_number", ""),
-                posting.get("posting_number", ""),
-                posting.get("in_process_at", ""),
-                posting.get("status", ""),
-                posting_services.get("marketplace_service_item_fulfillment", ""),
-                posting_services.get("currency", ""),
-                product.get("ozon_id", ""),
-                product.get("offer_id", ""),
-                price * quantity or "",
-                currency,
-                price or "",
-                currency,
-                quantity,
-            ])
+                    all_rows.append([
+                        settings["cabinet_name"],
+                        posting.get("order_number", ""),
+                        posting.get("posting_number", ""),
+                        formatted_date,
+                        posting.get("status", ""),
+                        posting_services.get("marketplace_service_item_fulfillment", ""),
+                        posting_services.get("currency", ""),
+                        product.get("ozon_id", ""),
+                        product.get("offer_id", ""),
+                        price * quantity or "",
+                        currency,
+                        price or "",
+                        currency,
+                        quantity,
+                    ])
+
+            if len(postings) < LIMIT:
+                break
+
+            offset += LIMIT
 
     if len(all_rows) > 1:
         sheet.update(all_rows, value_input_option="USER_ENTERED")
