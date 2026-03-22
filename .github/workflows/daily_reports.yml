@@ -30,8 +30,7 @@ jobs:
           spreadsheets = json.loads(os.environ["SPREADSHEETS_JSON"])
 
           commands = [
-              "products", "prices", "ads",
-              "stock-fbo"
+              "products", "prices", "ads", "stock-fbo"
           ]
 
           errors = []
