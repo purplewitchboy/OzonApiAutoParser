@@ -171,18 +171,16 @@ class DetailsSheet:
                 # Логируем прогресс для первой страницы
                 if page == 1:
                     logger.info(f"Первая страница: {len(operations)} операций")
-                    
-                    # Проверяем наличие page_count в ответе
-                    if 'page_count' in data:
-                        total_pages = data['page_count']
+                    total_pages = data.get('result', {}).get('page_count')
+                    if total_pages:
                         logger.info(f"Всего страниц согласно API: {total_pages}")
                     else:
                         logger.warning("Поле 'page_count' отсутствует в ответе API")
-                
+
                 # Проверяем, нужно ли загружать следующую страницу
+                total_pages = data.get('result', {}).get('page_count')
                 # 1. Если в ответе есть page_count, проверяем его
-                if 'page_count' in data:
-                    total_pages = data['page_count']
+                if total_pages:
                     if page >= total_pages:
                         logger.info(f"Достигнута последняя страница ({page}/{total_pages})")
                         break
@@ -191,7 +189,7 @@ class DetailsSheet:
                     logger.info(f"Последняя страница ({page}), операций меньше чем {page_size}")
                     break
                 # 3. Если достигнут лимит страниц
-                elif page >= max_pages:
+                if page >= max_pages:
                     logger.warning(f"Достигнут лимит страниц ({max_pages}). Загрузка прервана.")
                     break
                 

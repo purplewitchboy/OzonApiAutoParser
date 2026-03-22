@@ -36,21 +36,21 @@ class OzonSellerAPI:
             else:
                 response = self.session.get(url, params=payload, timeout=30)
             
-            response.raise_for_status()
-            
             if response.status_code == 200:
                 return OzonAPIResponse(
                     success=True,
                     data=response.json(),
-                    status_code=response.status_code
+                    status_code=200
                 )
             else:
+                body = response.text[:500]
+                logger.error(f"HTTP {response.status_code} {endpoint}: {body}")
                 return OzonAPIResponse(
                     success=False,
-                    error=f"HTTP {response.status_code}: {response.text[:200]}",
+                    error=f"HTTP {response.status_code}: {body}",
                     status_code=response.status_code
                 )
-                
+
         except requests.exceptions.Timeout:
             logger.error(f"Timeout при запросе к {endpoint}")
             return OzonAPIResponse(success=False, error="Timeout", status_code=408)
