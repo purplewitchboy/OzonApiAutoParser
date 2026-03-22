@@ -102,33 +102,30 @@ class DetailsSheet:
             logger.warning(f"Не удалось применить форматирование: {e}")
     
     def get_period(self):
-        """Возвращает период строго < 30 дней: вчера 23:59:59 (конец), (вчера - 29 дней) 00:00:00 (начало).
+        """Возвращает период в московском времени (UTC+3), 29 дней назад по МСК — вчера МСК.
 
-        Длительность = 29 дней 23:59:59 = 2591999 секунд < 30 дней (2592000 секунд).
-        Валидатор логирует точную длительность и выбрасывает исключение если период вышел за лимит.
+        Ozon ожидает даты в московском времени с суффиксом Z, как в официальном примере:
+          "from": "2021-11-01T00:00:00.000Z", "to": "2021-11-02T00:00:00.000Z"
+        GAS-скрипт работал аналогично: брал московские даты и добавлял T00:00:00Z.
         """
-        now = datetime.utcnow()
-        today = datetime(now.year, now.month, now.day, 0, 0, 0)
+        MSK = timedelta(hours=3)
+        now_msk = datetime.utcnow() + MSK
 
-        date_to = today - timedelta(seconds=1)                          # вчера 23:59:59
-        date_from = today - timedelta(days=30) + timedelta(seconds=1)   # (вчера-29дней) 00:00:00
+        # Вчера по Москве
+        yesterday_msk = datetime(now_msk.year, now_msk.month, now_msk.day, 0, 0, 0) - timedelta(days=1)
 
-        # Валидация: длительность должна быть строго меньше 30 дней
-        delta = date_to - date_from
-        max_allowed = timedelta(days=30) - timedelta(seconds=1)
-
-        if delta > max_allowed:
-            raise RuntimeError(
-                f"Период {delta} превышает лимит {max_allowed}. "
-                f"date_from={date_from}, date_to={date_to}"
-            )
+        date_to_msk = datetime(yesterday_msk.year, yesterday_msk.month, yesterday_msk.day, 23, 59, 59)
+        date_from_msk = yesterday_msk - timedelta(days=29)  # 29 дней назад, 00:00:00 МСК
 
         logger.info(
-            f"Период отчета: {date_from.strftime('%Y-%m-%d %H:%M:%S')} — "
-            f"{date_to.strftime('%Y-%m-%d %H:%M:%S')} "
-            f"(длительность: {delta.days} дней {delta.seconds // 3600:02d}:{(delta.seconds % 3600) // 60:02d}:{delta.seconds % 60:02d})"
+            f"Период отчета (МСК): {date_from_msk.strftime('%Y-%m-%d %H:%M:%S')} — "
+            f"{date_to_msk.strftime('%Y-%m-%d %H:%M:%S')}"
         )
-        return date_from.isoformat() + 'Z', date_to.isoformat() + 'Z'
+
+        return (
+            date_from_msk.strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+            date_to_msk.strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+        )
     
     def get_all_transactions(self, date_from: str, date_to: str):
         """Получение ВСЕХ транзакций за период (исправленная версия)"""
