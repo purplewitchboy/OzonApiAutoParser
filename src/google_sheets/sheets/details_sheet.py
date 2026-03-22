@@ -102,36 +102,33 @@ class DetailsSheet:
             logger.warning(f"Не удалось применить форматирование: {e}")
     
     def get_period(self):
-        """Получение периода: день ПО - вчера 23:59:59, день С - ровно 1 месяц назад 00:00:00.
+        """Возвращает период строго < 30 дней: вчера 23:59:59 (конец), (вчера - 29 дней) 00:00:00 (начало).
 
-        Ozon считает лимит календарным месяцем (date_from + 1 месяц >= date_to),
-        поэтому используем тот же день предыдущего месяца, а не фиксированное число дней.
+        Длительность = 29 дней 23:59:59 = 2591999 секунд < 30 дней (2592000 секунд).
+        Валидатор логирует точную длительность и выбрасывает исключение если период вышел за лимит.
         """
-        import calendar
-
         now = datetime.utcnow()
+        today = datetime(now.year, now.month, now.day, 0, 0, 0)
 
-        # Вчера 23:59:59 UTC
-        yesterday = now - timedelta(days=1)
-        date_to = datetime(yesterday.year, yesterday.month, yesterday.day, 23, 59, 59)
+        date_to = today - timedelta(seconds=1)                          # вчера 23:59:59
+        date_from = today - timedelta(days=30) + timedelta(seconds=1)   # (вчера-29дней) 00:00:00
 
-        # Тот же день месяц назад, 00:00:00 UTC
-        month = date_to.month - 1
-        year = date_to.year
-        if month == 0:
-            month = 12
-            year -= 1
-        # Если дня не существует в предыдущем месяце (напр. 31 марта → 28/29 февраля) — берём последний день
-        last_day = calendar.monthrange(year, month)[1]
-        day = min(date_to.day, last_day)
-        date_from = datetime(year, month, day, 0, 0, 0)
+        # Валидация: длительность должна быть строго меньше 30 дней
+        delta = date_to - date_from
+        max_allowed = timedelta(days=30) - timedelta(seconds=1)
 
-        formatted_from = date_from.isoformat() + 'Z'
-        formatted_to = date_to.isoformat() + 'Z'
+        if delta > max_allowed:
+            raise RuntimeError(
+                f"Период {delta} превышает лимит {max_allowed}. "
+                f"date_from={date_from}, date_to={date_to}"
+            )
 
-        logger.info(f"Период отчета: {date_from.strftime('%Y-%m-%d %H:%M:%S')} — {date_to.strftime('%Y-%m-%d %H:%M:%S')}")
-
-        return formatted_from, formatted_to
+        logger.info(
+            f"Период отчета: {date_from.strftime('%Y-%m-%d %H:%M:%S')} — "
+            f"{date_to.strftime('%Y-%m-%d %H:%M:%S')} "
+            f"(длительность: {delta.days} дней {delta.seconds // 3600:02d}:{(delta.seconds % 3600) // 60:02d}:{delta.seconds % 60:02d})"
+        )
+        return date_from.isoformat() + 'Z', date_to.isoformat() + 'Z'
     
     def get_all_transactions(self, date_from: str, date_to: str):
         """Получение ВСЕХ транзакций за период (исправленная версия)"""
