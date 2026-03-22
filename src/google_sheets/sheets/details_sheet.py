@@ -112,8 +112,8 @@ class DetailsSheet:
             23, 59, 59
         )
         
-        # 30 дней назад от вчера 00:00:00 UTC
-        date_from = date_to - timedelta(days=30)
+        # 29 дней назад от вчера 00:00:00 UTC (итого 30 дней включительно — лимит Ozon)
+        date_from = date_to - timedelta(days=29)
         date_from = datetime(
             date_from.year, date_from.month, date_from.day,
             0, 0, 0
