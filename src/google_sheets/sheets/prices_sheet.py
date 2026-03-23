@@ -85,15 +85,22 @@ class PricesSheet:
         for item in items:
             try:
                 price = item.get('price', {})
+
+                def to_float(val):
+                    try:
+                        return float(val) if val not in (None, '') else ''
+                    except (ValueError, TypeError):
+                        return val
+
                 row_data = [
                     self.settings.get('cabinet_name', ''),
                     today_date,
-                    str(item.get('product_id', '')),
+                    int(item['product_id']) if item.get('product_id') else '',
                     item.get('offer_id', ''),
-                    price.get('old_price', ''),
-                    price.get('min_price', ''),
-                    price.get('price', ''),
-                    price.get('marketing_seller_price', '')
+                    to_float(price.get('old_price', '')),
+                    to_float(price.get('min_price', '')),
+                    to_float(price.get('price', '')),
+                    to_float(price.get('marketing_seller_price', ''))
                 ]
                 new_rows.append(row_data)
             except Exception as e:
@@ -122,7 +129,7 @@ class PricesSheet:
                 ensure_sheet_size(worksheet, end_row, 8)
 
                 cell_range = f"A{start_row}:H{end_row}"
-                worksheet.update(cell_range, batch)
+                worksheet.update(cell_range, batch, value_input_option='USER_ENTERED')
 
                 logger.info(f"Записано {len(batch)} строк в строки {start_row}-{end_row}")
 
