@@ -25,12 +25,14 @@ from scripts.settings import (
     get_or_create_sheet,
     ozon_headers,
     to_iso,
+    normalize_warehouse_name,
 )
 from src.utils.logger import setup_logger
 
 logger = logging.getLogger(__name__)
 
 STOCK_WAREHOUSES_URL = "https://api-seller.ozon.ru/v2/analytics/stock_on_warehouses"
+ANALYTICS_STOCKS_URL = "https://api-seller.ozon.ru/v1/analytics/stocks"
 
 HEADERS = [
     "Кабинет",
@@ -52,6 +54,7 @@ def load_stock_fbs(spreadsheet_id: str, credentials: dict) -> bool:
 
     hdrs = ozon_headers(settings)
 
+    # ---------- STOCK ON WAREHOUSES (FBS) ----------
     payload = {
         "filter": {
             "since": to_iso(settings["date_from"]),
@@ -66,12 +69,15 @@ def load_stock_fbs(spreadsheet_id: str, credentials: dict) -> bool:
         resp = session.post(STOCK_WAREHOUSES_URL, json=payload, headers=hdrs, timeout=30)
 
     logger.info(f"Stock FBS HTTP CODE: {resp.status_code}")
+    logger.info(f"Stock FBS response: {resp.text[:300]}")
 
     if resp.status_code != 200:
         raise RuntimeError(f"Stock FBS error {resp.status_code}: {resp.text[:200]}")
 
     rows_data = resp.json().get("result", {}).get("rows", [])
+    logger.info(f"stock_on_warehouses (fbs) вернул {len(rows_data)} строк")
 
+    # ---------- OUTPUT ----------
     all_rows = [HEADERS]
 
     for row in rows_data:

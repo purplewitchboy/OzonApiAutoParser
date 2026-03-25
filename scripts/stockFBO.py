@@ -60,11 +60,6 @@ def load_stock_fbo(spreadsheet_id: str, credentials: dict) -> bool:
 
     # ---------- STOCK ON WAREHOUSES ----------
     payload = {
-        "filter": {
-            "since": to_iso(settings["date_from"]),
-            "to": to_iso(settings["date_to"]),
-        },
-        "warehouse_type": "fbo",
         "limit": 1000,
         "offset": 0,
     }
