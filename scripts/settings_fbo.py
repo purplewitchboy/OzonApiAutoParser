@@ -1,12 +1,3 @@
-"""
-Настройки для скриптов salesFBO и ordersFBO.
-
-Отличия от settings.py:
-  - get_settings() вычисляет период в МСК: вчера 23:59:59 — 30 дней назад 00:00:00
-  - format_date() возвращает только DD.MM.YYYY (без времени)
-  - to_iso() — пассthrough, даты уже в ISO-формате
-"""
-
 import logging
 from datetime import datetime, timedelta
 
