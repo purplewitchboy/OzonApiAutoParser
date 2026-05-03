@@ -1,13 +1,3 @@
-"""
-Аналог OrdersFBS.txt (GAS loadOrdersFBS).
-
-Загружает заказы FBS из Ozon API и записывает
-результат на лист «Заказы FBS» в Google Sheets.
-
-Запуск:
-  python run.py orders-fbs <spreadsheet_id>
-"""
-
 import sys
 import os
 import logging
