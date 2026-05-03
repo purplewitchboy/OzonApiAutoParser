@@ -1,13 +1,3 @@
-"""
-Аналог StockFBS.txt (GAS loadStockFBS).
-
-Загружает остатки FBS из Ozon API и записывает
-результат на лист «Склад FBS» в Google Sheets.
-
-Запуск:
-  python run.py stock-fbs <spreadsheet_id>
-"""
-
 import sys
 import os
 import logging
