@@ -5,7 +5,7 @@ import re
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from src.ozon_api.performance_api import OzonPerformanceAPI
-from src.google_sheets.utils import ensure_sheet_size
+from src.google_sheets.utils import with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -23,21 +23,24 @@ class AdsSheet:
         # Конфигурация ТОЧНО как в GAS-скрипте
         self.config = {
             'DAYS_BACK': 30,               # Глубина сбора данных в днях
-            'POLLING_RETRY': 15,           # Макс. количество проверок готовности отчета
+            'POLLING_RETRY': 40,           # Макс. количество проверок готовности отчета (40 x 15с = 10 мин)
             'POLLING_SLEEP': 15,           # Пауза между проверками (15 секунд)
-            'CHUNK_SIZE': 10               # Размер пачки (как в GAS: 10 кампаний)
+            'CHUNK_SIZE': 10,              # Размер пачки (10 кампаний)
+            'REPORT_REQUEST_MAX_RETRIES': 20,  # Ретраи запроса отчёта при "лимит активных запросов"
+            'REPORT_REQUEST_RETRY_DELAY': 30,  # Пауза (сек) между такими ретраями
         }
     
     def create_or_clear_sheet(self):
-        """Создание или очистка листа Реклама (аналог prepareReportSheet)"""
+        """Создание или очистка листа Реклама"""
         try:
-            worksheet = self.spreadsheet.worksheet('Реклама')
+            worksheet = with_retry(self.spreadsheet.worksheet, 'Реклама')
             logger.info("Лист 'Реклама' найден, очищаем...")
-            worksheet.clear()
+            with_retry(worksheet.clear)
             return worksheet
         except gspread.exceptions.WorksheetNotFound:
             logger.info("Создаю лист 'Реклама'...")
-            worksheet = self.spreadsheet.add_worksheet(
+            worksheet = with_retry(
+                self.spreadsheet.add_worksheet,
                 title='Реклама',
                 rows=1000,
                 cols=15
@@ -45,7 +48,7 @@ class AdsSheet:
             return worksheet
     
     def write_headers(self, worksheet):
-        """Запись заголовков (аналог prepareReportSheet)"""
+        """Запись заголовков"""
         headers = [
             "ID Кампании", "Название кампании", "SKU/ID товара", "Дата",
             "Показы", "Клики", "CTR (%)", "Расход (руб)", "Ср. ставка (руб)",
@@ -54,11 +57,11 @@ class AdsSheet:
         ]
         
         # Записываем заголовки
-        worksheet.update('A1', [headers])
+        with_retry(worksheet.update, 'A1', [headers])
         
         # Форматируем заголовки (жирный шрифт и серый фон)
         try:
-            worksheet.format('A1:O1', {
+            with_retry(worksheet.format, 'A1:O1', {
                 'textFormat': {'bold': True},
                 'backgroundColor': {'red': 0.94, 'green': 0.94, 'blue': 0.94}
             })
@@ -66,7 +69,7 @@ class AdsSheet:
             logger.warning(f"Не удалось применить форматирование: {e}")
     
     def get_all_campaigns(self) -> List[str]:
-        """Получение ВСЕХ кампаний (аналог getTopActiveCampaignIds)"""
+        """Получение ВСЕХ кампаний"""
         response = self.performance_api.get_campaigns()
         
         if not response.success:
@@ -101,17 +104,17 @@ class AdsSheet:
         return campaign_ids
     
     def chunk_array(self, array: List[str], size: int) -> List[List[str]]:
-        """Разделение массива на части заданного размера (аналог chunkArray)"""
+        """Разделение массива на части заданного размера"""
         result = []
         for i in range(0, len(array), size):
             result.append(array[i:i + size])
         return result
     
     def get_report_period(self) -> Tuple[str, str]:
-        """Получение периода для отчета в формате UTC (как в GAS)"""
+        """Получение периода для отчета в формате UTC"""
         now = datetime.utcnow()
         
-        # Конец периода - сегодня 23:59:59 UTC (как в GAS)
+        # Конец периода - сегодня 23:59:59 UTC
         date_to = datetime(
             now.year, now.month, now.day,
             23, 59, 59
@@ -124,7 +127,7 @@ class AdsSheet:
             0, 0, 0
         )
         
-        # Форматируем в ISO с Z (UTC) как в GAS
+        # Форматируем в ISO с Z (UTC)
         formatted_from = date_from.isoformat() + 'Z'
         formatted_to = date_to.isoformat() + 'Z'
         
@@ -133,17 +136,35 @@ class AdsSheet:
         return formatted_from, formatted_to
     
     def request_report_uuid(self, campaign_ids: List[str], date_from: str, date_to: str) -> Optional[str]:
-        """Запрос отчета и получение UUID (аналог requestReportUuid)"""
-        response = self.performance_api.request_statistics_report(
-            campaigns=campaign_ids,
-            date_from=date_from,
-            date_to=date_to
-        )
-        
-        if response.success and response.data:
-            return response.data.get('UUID')
-        
-        logger.error("Ошибка при запросе отчета: %s", response.error)
+        """Запрос отчета и получение UUID"""
+        max_retries = self.config['REPORT_REQUEST_MAX_RETRIES']
+        retry_delay = self.config['REPORT_REQUEST_RETRY_DELAY']
+
+        for attempt in range(1, max_retries + 1):
+            response = self.performance_api.request_statistics_report(
+                campaigns=campaign_ids,
+                date_from=date_from,
+                date_to=date_to
+            )
+
+            if response.success and response.data:
+                return response.data.get('UUID')
+
+            error_text = (response.error or '').lower()
+            is_capacity_limit = '429' in error_text and 'лимит' in error_text and 'запрос' in error_text
+
+            if is_capacity_limit and attempt < max_retries:
+                logger.warning(
+                    "Лимит активных отчётов Ozon (1 одновременно) — попытка %s/%s, "
+                    "жду %s сек. и повторяю запрос...",
+                    attempt, max_retries, retry_delay
+                )
+                time.sleep(retry_delay)
+                continue
+
+            logger.error("Ошибка при запросе отчета: %s", response.error)
+            return None
+
         return None
     
     def _convert_to_correct_type(self, value, field_name: str = ""):
@@ -194,8 +215,8 @@ class AdsSheet:
         # Для других типов преобразуем в строку
         return str(value)
     
-    def poll_and_save_report(self, uuid: str) -> bool:
-        """Ожидание и получение готового отчета (аналог pollAndSaveReport)"""
+    def poll_and_save_report(self, uuid: str, worksheet) -> bool:
+        """Ожидание и получение готового отчета"""
         attempts = 0
         
         while attempts < self.config['POLLING_RETRY']:
@@ -209,7 +230,7 @@ class AdsSheet:
             
             if response.success:
                 if response.data:
-                    self.save_report_to_sheet(response.data)
+                    self.save_report_to_sheet(response.data, worksheet)
                     return True
                 # Если отчет еще не готов (204)
                 continue
@@ -222,15 +243,13 @@ class AdsSheet:
         logger.error("Не удалось дождаться отчета за %s попыток", attempts)
         return False
     
-    def save_report_to_sheet(self, report_data: Dict):
-        """Запись данных отчета в таблицу (аналог saveReportToSheet)"""
-        ss = self.spreadsheet
-        sheet_name = 'Реклама'
-        
-        try:
-            sheet = ss.worksheet(sheet_name)
-        except gspread.exceptions.WorksheetNotFound:
-            sheet = ss.add_worksheet(sheet_name, 1000, 15)
+    def save_report_to_sheet(self, report_data: Dict, worksheet):
+        """Запись данных отчета в таблицу
+
+        ВАЖНО: worksheet передаётся уже открытым из execute(), чтобы не делать
+        лишний read-запрос ss.worksheet(sheet_name) на каждый чанк кампаний
+        """
+        sheet = worksheet
         
         rows_to_append = []
         
@@ -244,7 +263,7 @@ class AdsSheet:
                 campaign_id_str = str(campaign_id)
                 campaign_title_str = str(campaign_title) if campaign_title else ""
                 sku_product_id = str(row.get('sku') or row.get('product_id') or "")
-                date_value = row.get('date') or ""  # RFC3339 формат, оставляем как строку
+                date_value = row.get('date') or ""
                 title = str(row.get('title') or "")
                 
                 # Числовые поля с приведением типов
@@ -301,23 +320,14 @@ class AdsSheet:
                 ])
         
         if rows_to_append:
-            # Получаем все существующие данные
-            all_values = sheet.get_all_values()
-            last_row = len(all_values)
-            
-            # Если есть только заголовки, начинаем со второй строки
-            if last_row <= 1:
-                start_row = 2
-            else:
-                start_row = last_row + 1
-            
-            # Авторасширение листа
-            ensure_sheet_size(sheet, start_row + len(rows_to_append), 15)
-            
-            # Записываем данные с явным указанием value_input_option
-            # Используем 'USER_ENTERED' чтобы Google Sheets правильно интерпретировал типы данных
-            cell_range = f"A{start_row}:O{start_row + len(rows_to_append) - 1}"
-            sheet.update(cell_range, rows_to_append, value_input_option='USER_ENTERED')
+            # append_rows сам находит первую свободную строку и дописывает данные —
+            # это ОДИН write-запрос без предварительного чтения листа.
+            with_retry(
+                sheet.append_rows,
+                rows_to_append,
+                value_input_option='USER_ENTERED',
+                table_range='A1'
+            )
             
             logger.info("Добавлено строк: %s", len(rows_to_append))
     
@@ -343,7 +353,7 @@ class AdsSheet:
             # 4. Получение периода
             date_from, date_to = self.get_report_period()
             
-            # 5. Разделение на пачки по 10 кампаний (ТОЧНО как в GAS)
+            # 5. Разделение на пачки по 10 кампаний
             chunks = self.chunk_array(campaign_ids, self.config['CHUNK_SIZE'])
             
             # 6. Обработка каждой пачки
@@ -354,14 +364,14 @@ class AdsSheet:
                 if not uuid:
                     continue
                 
-                success = self.poll_and_save_report(uuid)
+                success = self.poll_and_save_report(uuid, worksheet)
                 
                 if success:
                     logger.info("--- ЗАВЕРШЕНО УСПЕШНО: Данные обновлены в таблице ---")
                 else:
                     logger.info("--- ОШИБКА: Не удалось дождаться отчета от Ozon ---")
                 
-                # Важная пауза между запросами (как в GAS)
+                # Важная пауза между запросами
                 if i < len(chunks):
                     time.sleep(2)
             
