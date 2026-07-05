@@ -4,7 +4,7 @@ from typing import List, Dict
 import logging
 from src.ozon_api.seller_api import OzonSellerAPI
 from src.utils.converters import calculate_volume_liters, convert_weight_to_kg
-from src.google_sheets.utils import ensure_sheet_size  # <-- ДОБАВЛЕНО
+from src.google_sheets.utils import ensure_sheet_size
 
 logger = logging.getLogger(__name__)
 
