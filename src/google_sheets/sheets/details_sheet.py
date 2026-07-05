@@ -8,7 +8,7 @@ from src.google_sheets.utils import ensure_sheet_size
 
 logger = logging.getLogger(__name__)
 
-# Маппинг услуг на столбцы (аналогично GAS скрипту)
+# Маппинг услуг на столбцы
 SERVICE_TO_COLUMN = {
     'MarketplaceServiceItemRedistributionLastMileCourier': 'Последняя миля',
     'MarketplaceServiceItemDirectFlowTrans': 'Магистраль',
@@ -169,7 +169,7 @@ class DetailsSheet:
         return chunks
     
     def get_all_transactions(self, date_from: str, date_to: str):
-        """Получение ВСЕХ транзакций за период (исправленная версия)"""
+        """Получение ВСЕХ транзакций за период"""
         result = []
         page = 1
         page_size = 1000
@@ -381,7 +381,7 @@ class DetailsSheet:
         return column_sums
     
     def process_transactions_to_rows(self, operations, posting_data_cache):
-        """Обработка операций и формирование строк (исправленная логика с группировкой)"""
+        """Обработка операций и формирование строк"""
         rows = []
         processed_count = 0
         total_operations = len(operations)
@@ -404,7 +404,7 @@ class DetailsSheet:
             if posting_number:
                 posting_data = posting_data_cache.get(posting_number)
             
-            # ГРУППИРОВКА ТОВАРОВ ПО SKU (решение проблемы с дублированием)
+            # ГРУППИРОВКА ТОВАРОВ ПО SKU
             # Создаем словарь для группировки товаров по SKU
             grouped_items = {}
             
@@ -437,11 +437,11 @@ class DetailsSheet:
             
             # Обработка сгруппированных товаров
             for item_key, grouped_item in grouped_items.items():
-                # Инициализация переменных для строки (ТОЧНО как в GAS)
+                # Инициализация переменных для строки
                 offer_id = ""  # По умолчанию - пустая строка
                 quantity = 0   # По умолчанию - 0
                 
-                # ЛОГИКА ЗАПОЛНЕНИЯ ПО ДАННЫМ ОТПРАВЛЕНИЯ (как в GAS)
+                # ЛОГИКА ЗАПОЛНЕНИЯ ПО ДАННЫМ ОТПРАВЛЕНИЯ
                 if posting_data and posting_data.get('products') and posting_data['products']:
                     # 1. АРТИКУЛ: Берем всегда из ПЕРВОГО товара в отправлении.
                     first_product = posting_data['products'][0]
@@ -460,7 +460,7 @@ class DetailsSheet:
                         if matched_product and matched_product.get('quantity') is not None:
                             # Если нашли - берем его количество.
                             quantity = matched_product['quantity']
-                        # Если не нашли, quantity останется 0 (как в GAS)
+                        # Если не нашли, quantity останется 0
                 else:
                     # Если данных отправления нет, но в item есть SKU, то это, вероятно, услуга (например, эквайринг).
                     # В таком случае в количество ставим 1.
