@@ -106,42 +106,67 @@ class DetailsSheet:
 
         Ozon ожидает даты в московском времени с суффиксом Z (как в официальном примере API).
 
-        Коррекция февраля: Ozon считает февраль 30-дневным, поэтому при попадании начала
-        периода в февраль прибавляем компенсационные дни:
-          - Не високосный год (28 дней): Ozon «видит» несуществующие 29 и 30 февраля → +2 дня
-          - Високосный год (29 дней): Ozon «видит» несуществующее 30 февраля → +1 день
+        Возвращает datetime-объекты (не строки), т.к. далее период дробится на чанки
+        методом split_period_into_chunks() — см. execute().
         """
-        import calendar
-
         MSK = timedelta(hours=3)
         now_msk = datetime.utcnow() + MSK
         yesterday_msk = datetime(now_msk.year, now_msk.month, now_msk.day, 0, 0, 0) - timedelta(days=1)
 
         date_to_msk = datetime(yesterday_msk.year, yesterday_msk.month, yesterday_msk.day, 23, 59, 59)
 
-        # Базовое начало: вчера минус 30 дней, 00:00:00
+        # Начало: вчера минус 30 дней, 00:00:00
         raw_from = yesterday_msk - timedelta(days=30)
         date_from_msk = datetime(raw_from.year, raw_from.month, raw_from.day, 0, 0, 0)
-
-        # Коррекция февраля
-        correction = 0
-        if date_from_msk.month == 2:
-            if calendar.isleap(date_from_msk.year):
-                correction = 2  # Исключаем воображаемое 30 февраля
-            else:
-                correction = 3  # Исключаем воображаемые 29 и 30 февраля
-            date_from_msk += timedelta(days=correction)
 
         logger.info(
             f"Период отчета (МСК): {date_from_msk.strftime('%Y-%m-%d %H:%M:%S')} — "
             f"{date_to_msk.strftime('%Y-%m-%d %H:%M:%S')}"
-            + (f" (коррекция февраля: +{correction} дн.)" if correction else "")
         )
 
-        return (
-            date_from_msk.strftime('%Y-%m-%dT%H:%M:%S.000Z'),
-            date_to_msk.strftime('%Y-%m-%dT%H:%M:%S.000Z'),
-        )
+        return date_from_msk, date_to_msk
+
+    @staticmethod
+    def split_period_into_chunks(date_from: datetime, date_to: datetime, chunk_days: int = 20):
+        """Дробит период на подпериоды по chunk_days дней (+ остаток).
+
+        Проблема: у Ozon лимит в 30 дней на выгрузку транзакций, но иногда он сам
+        считает количество дней в периоде "неправильно" (например, период
+        06.06-07.07 календарно на грани 30 дней, но Ozon отдаёт ошибку лимита).
+        Вместо того чтобы гадать, как именно Ozon считает дни, и городить коррекции
+        под конкретные месяцы, период просто режется на гарантированно безопасные
+        куски по chunk_days дней (+ остаток), которые точно проходят под лимит
+        при любой логике подсчёта на стороне Ozon.
+
+        Возвращает список кортежей (from_str, to_str) в формате, который ожидает
+        Ozon API: '%Y-%m-%dT%H:%M:%S.000Z'.
+        """
+        chunks = []
+        current_start = date_from
+
+        while current_start <= date_to:
+            # Конец чанка: либо +chunk_days-1 дней, либо конец всего периода
+            chunk_end_date = current_start + timedelta(days=chunk_days - 1)
+            chunk_end = datetime(
+                chunk_end_date.year, chunk_end_date.month, chunk_end_date.day,
+                23, 59, 59
+            )
+            if chunk_end > date_to:
+                chunk_end = date_to
+
+            chunks.append((
+                current_start.strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+                chunk_end.strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+            ))
+
+            # Следующий чанк начинается со следующих суток после конца текущего
+            next_start_date = chunk_end + timedelta(seconds=1)
+            current_start = datetime(
+                next_start_date.year, next_start_date.month, next_start_date.day,
+                0, 0, 0
+            )
+
+        return chunks
     
     def get_all_transactions(self, date_from: str, date_to: str):
         """Получение ВСЕХ транзакций за период (исправленная версия)"""
@@ -509,10 +534,23 @@ class DetailsSheet:
         try:
             # 1. Получение периода (автоматически)
             date_from, date_to = self.get_period()
-            
-            # 2. Загрузка всех транзакций за период
-            operations = self.get_all_transactions(date_from, date_to)
-            
+
+            # 2. Дробим период на безопасные чанки по 20 дней (+ остаток),
+            #    чтобы не упираться в лимит Ozon на 30 дней в одном запросе
+            period_chunks = self.split_period_into_chunks(date_from, date_to, chunk_days=20)
+            logger.info(f"Период разбит на {len(period_chunks)} чанк(а/ов): {period_chunks}")
+
+            # 3. Загрузка всех транзакций по каждому чанку периода
+            operations = []
+            for idx, (chunk_from, chunk_to) in enumerate(period_chunks, 1):
+                logger.info(f"Загрузка чанка {idx}/{len(period_chunks)}: {chunk_from} — {chunk_to}")
+                chunk_operations = self.get_all_transactions(chunk_from, chunk_to)
+                operations.extend(chunk_operations)
+
+                # Небольшая пауза между чанками, чтобы не упереться в rate limit
+                if idx < len(period_chunks):
+                    time.sleep(1)
+
             if not operations:
                 logger.info("За выбранный период транзакций не найдено.")
                 return False
