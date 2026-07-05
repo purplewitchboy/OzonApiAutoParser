@@ -20,7 +20,7 @@ class AdsSheet:
             client_secret=settings.get('performance_client_secret', '')
         )
         
-        # Конфигурация ТОЧНО как в GAS-скрипте
+        # Конфигурация
         self.config = {
             'DAYS_BACK': 30,               # Глубина сбора данных в днях
             'POLLING_RETRY': 40,           # Макс. количество проверок готовности отчета (40 x 15с = 10 мин)
@@ -82,7 +82,7 @@ class AdsSheet:
             logger.info("Не найдено ни одной кампании")
             return []
         
-        # Фильтруем по статусам ТОЧНО как в GAS-скрипте
+        # Фильтруем по статусам
         active_states = [
             'CAMPAIGN_STATE_RUNNING',
             'CAMPAIGN_STATE_STOPPED', 
